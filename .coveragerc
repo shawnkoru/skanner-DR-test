@@ -1,0 +1,12 @@
+[run]
+omit =
+    */__main__.py
+    */site-packages/*
+    */*_test.py
+    */test_*.py
+    tests/*
+
+[report]
+exclude_lines =
+    if __name__ == .__main__.:
+    pragma: no cover

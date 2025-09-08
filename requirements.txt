@@ -1,0 +1,7 @@
+typer[all]
+python-dotenv
+rich
+openai
+requests
+pytest
+pytest-cov
