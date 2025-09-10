@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Horizon Scan Viewer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin: 1.5rem; line-height: 1.35; }
+    header { display:flex; flex-wrap:wrap; gap:1rem; align-items:center; margin-bottom:1rem; }
+    #markdownOutput { border:1px solid #8884; padding:1rem; border-radius:8px; max-width: 1100px; }
+    .hidden { display:none; }
+    button { cursor:pointer; }
+    #status { font-size: .85rem; opacity:.75; }
+    .tag { display:inline-block; background:#4a6cf01a; color:#2a4cba; padding:2px 6px; border-radius:4px; font-size:.7rem; margin-left:.5rem; }
+    .empty-note { font-style: italic; opacity: .7; }
+    footer { margin-top:3rem; font-size:.75rem; opacity:.6; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0;">Horizon Scan Viewer</h1>
+    <input id="fileInput" type="file" accept="application/json" />
+    <button id="sampleBtn" type="button">Load Sample (Paste JSON)</button>
+    <label style="font-size:.8rem;">Max Signals / Domain <input id="maxPerDomain" type="number" min="0" value="0" style="width:4rem;" title="0 = unlimited" /></label>
+    <span id="status">Select a horizon_scan_results_*.json file...</span>
+  </header>
+  <div id="markdownOutput"></div>
+  <footer>
+    Simple static viewer. Drag/drop JSON also supported. | Uses marked.js
+  </footer>
+<script>
+const fileInput = document.getElementById('fileInput');
+const output = document.getElementById('markdownOutput');
+const statusEl = document.getElementById('status');
+const maxPerDomainEl = document.getElementById('maxPerDomain');
+const sampleBtn = document.getElementById('sampleBtn');
+
+function readFile(file) {
+  const reader = new FileReader();
+  statusEl.textContent = 'Loading ' + file.name + '...';
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      renderData(data, file.name);
+    } catch (e) {
+      statusEl.textContent = 'Error parsing JSON: ' + e.message;
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files && e.target.files[0]) {
+    readFile(e.target.files[0]);
+  }
+});
+
+document.addEventListener('dragover', e => { e.preventDefault(); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+    readFile(e.dataTransfer.files[0]);
+  }
+});
+
+sampleBtn.addEventListener('click', () => {
+  const pasted = prompt('Paste horizon scan JSON here:');
+  if (!pasted) return;
+  try { renderData(JSON.parse(pasted), 'Pasted Sample'); }
+  catch(e) { alert('Parse error: ' + e.message); }
+});
+
+function safe(v){ return (v === undefined || v === null) ? '' : String(v); }
+function truncate(str, n){ return str; } // no truncation now
+
+function renderData(data, label='') {
+  const maxPer = parseInt(maxPerDomainEl.value||'0',10); // 0 unlimited
+  const signalsByDomain = data.signals || {};
+  const scenarioScores = data.scenario_scores || data.scenarios || [];
+
+  let md = `# Horizon Scan Results\n\n`;
+  if (label) md += `*Source:* **${label}**\\n\n`;
+  const ts = new Date().toLocaleString();
+  md += `*Rendered:* ${ts}\n\n`;
+
+  // Signals Section
+  md += `## Signals by Domain\n\n`;
+  const preferredOrder = ["Social","Tech","Economic","Environmental","Political","Values"];
+  let domains = Object.keys(signalsByDomain);
+  if (!domains.length) md += '_No signals present._\n\n';
+  domains = domains.sort((a,b)=>{
+    const ai = preferredOrder.indexOf(a);
+    const bi = preferredOrder.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  for (const domain of domains) {
+    const list = Array.isArray(signalsByDomain[domain]) ? signalsByDomain[domain] : [];
+    md += `### ${domain} (${list.length})\n`;
+    if (!list.length) { md += `*No signals collected.*\n\n`; continue; }
+    const slice = (maxPer>0? list.slice(0,maxPer): list);
+    slice.forEach((sig,i) => {
+      const title = safe(sig.title)||'Untitled';
+      const link = safe(sig.sourceURL||sig.link||'');
+      const desc = safe(sig.description||sig.snippet||'');
+      const relevance = safe(sig.relevance||'');
+      md += `- **${escapeMd(title)}**` + (link? ` ([link](${link}))`:'') + `\n`;
+  if (relevance) md += `  - Relevance: ${escapeMd(relevance)}\n`;
+  if (desc) md += `  - Description: ${escapeMd(desc)}\n`;
+    });
+    if (maxPer>0 && list.length>maxPer) md += `  - _(${list.length-maxPer} more truncated)_\n`;
+    md += '\n';
+  }
+
+  // Scenario Scores (if present)
+  if (scenarioScores.length) {
+    md += `## Scenario Scores (${scenarioScores.length})\n`;
+    scenarioScores.forEach((s,i) => {
+      const name = escapeMd(s.name || `Scenario ${i+1}`);
+      md += `### ${name}\n`;
+      const scoreFields = Object.keys(s).filter(k=>typeof s[k]==='number');
+      if (scoreFields.length) {
+        md += scoreFields.map(k=>`- **${escapeMd(k)}:** ${s[k]}`).join('\n') + '\n';
+      }
+      if (s.description) md += `\n${escapeMd(s.description)}\n`;
+      md += '\n';
+    });
+  }
+
+  statusEl.textContent = 'Loaded ' + label;
+  output.innerHTML = marked.parse(md);
+}
+
+function escapeMd(str) {
+  return str.replace(/[<>*_`~|]/g, c => '\\' + c);
+}
+</script>
+</body>
+</html>

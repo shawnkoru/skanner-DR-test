@@ -83,13 +83,15 @@ def test_horizon_scan_end_to_end_flow(mock_llm_service, mock_agents, tmp_path):
 
     # Verify that output files were created in the specified directory
     assert output_dir.is_dir()
-    files = list(output_dir.iterdir())
+    results_dir = output_dir / "results"
+    assert results_dir.is_dir(), "results directory missing"
+    files = list(results_dir.iterdir())
     md_files = [f for f in files if f.suffix == '.md']
     json_files = [f for f in files if f.suffix == '.json']
 
-    # Expect two JSON artifacts now: parsed_research_*.json and horizon_scan_results_*.json
-    assert len(md_files) == 1 and md_files[0].name.startswith("dr_")
-    assert len(json_files) == 2
+    # Expect dr markdown + parsed + horizon report
+    assert len(md_files) == 1 and md_files[0].name.startswith("dr_"), f"Markdown files present: {[f.name for f in md_files]}"
+    assert len(json_files) == 2, f"JSON files present: {[f.name for f in json_files]}"
     parsed_files = [f for f in json_files if f.name.startswith("parsed_research_")]
     report_files = [f for f in json_files if f.name.startswith("horizon_scan_results_")]
     assert len(parsed_files) == 1

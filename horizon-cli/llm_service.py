@@ -76,11 +76,12 @@ def _extract_text_from_output(status_response: Any) -> str:
 def configure_timings(poll_interval: int = None, max_cycles: int = None, debug: bool = None):
     """Optionally override runtime timing/debug controls (used by CLI flags)."""
     global POLL_INTERVAL_SECONDS, MAX_POLL_CYCLES, DEBUG_DEEP_RESEARCH
-    if poll_interval is not None:
+    from typer.models import OptionInfo
+    if poll_interval is not None and not isinstance(poll_interval, OptionInfo):
         POLL_INTERVAL_SECONDS = max(1, int(poll_interval))
-    if max_cycles is not None:
+    if max_cycles is not None and not isinstance(max_cycles, OptionInfo):
         MAX_POLL_CYCLES = max(1, int(max_cycles))
-    if debug is not None:
+    if debug is not None and not isinstance(debug, OptionInfo):
         DEBUG_DEEP_RESEARCH = bool(debug)
 
 

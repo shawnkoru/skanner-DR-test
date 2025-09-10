@@ -32,6 +32,14 @@ class JSONFormatter(logging.Formatter):
 
 def init_logger(log_json: bool = False, log_level: str = "INFO"):
     global LOG_JSON
+    try:
+        from typer.models import OptionInfo
+        if isinstance(log_json, OptionInfo):
+            log_json = False
+        if isinstance(log_level, OptionInfo):
+            log_level = "INFO"
+    except Exception:  # pragma: no cover - defensive
+        pass
     LOG_JSON = log_json
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))

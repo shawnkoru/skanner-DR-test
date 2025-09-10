@@ -40,10 +40,11 @@ def search(query: str, max_retries: int = DEFAULT_MAX_RETRIES, max_results: int 
             normalized = []
             for r in raw_results:
                 # New API returns url/title/excerpts[]; legacy may return title/snippet/link
-                title = r.get("title") or r.get("title", "N/A")
+                title = r.get("title") or "N/A"
                 link = r.get("url") or r.get("link") or r.get("sourceURL") or "N/A"
                 if "excerpts" in r and isinstance(r.get("excerpts"), list):
-                    snippet = " ".join(r["excerpts"])[:5000]
+                    # Preserve full concatenated excerpts without truncation
+                    snippet = " ".join(r["excerpts"])  # no slicing
                 else:
                     snippet = r.get("snippet") or r.get("description") or ""
                 normalized.append({

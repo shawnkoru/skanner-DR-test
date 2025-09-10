@@ -77,9 +77,9 @@ With caching and JSON logs:
 python main.py --topic "Generative Biology" --cache-dir ./.cache --log-json --poll-interval 5 --max-cycles 90
 ```
 
-Each run produces:
-1. Deep research markdown (unless `--dr-file` used).
-2. Parsed research JSON (`parsed_research_*.json`).
-3. Horizon scan report JSON consolidating signals (and scenarios unless skipped).
+Each run produces (under `results/` inside the specified `--output-dir`):
+1. `dr_*.md` deep research markdown (unless `--dr-file` used).
+2. `parsed_research_*.json` parsed research structure.
+3. `horizon_scan_results_*.json` ordered STEEPV signals + summary (+ scenarios unless skipped).
 
 If `--skip-web-search` is set, agents still build domain maps but return empty signals; you can later inject mock results or run again without the flag to populate signals.

@@ -12,6 +12,7 @@ from agents.environmental_agent import EnvironmentalAgent
 from agents.political_agent import PoliticalAgent
 from agents.values_agent import ValuesAgent
 import scenario_service
+from collections import OrderedDict
 
 console = Console()
 app = typer.Typer()
@@ -78,7 +79,9 @@ def horizon_scan(
         logger_service.log_event("deep_research_complete", topic=topic, length=len(dr_text))
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    dr_filename = output_dir / f"dr_{timestamp}.md"
+    results_dir = output_dir / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    dr_filename = results_dir / f"dr_{timestamp}.md"
 
     if dr_file is None:  # Only write if we just generated it
         with open(dr_filename, "w") as f:
@@ -101,7 +104,7 @@ def horizon_scan(
         logger_service.log_event("cache_saved", topic=topic)
 
     # Persist parsed research as its own artifact for reuse/debugging
-    parsed_filename = output_dir / f"parsed_research_{timestamp}.json"
+    parsed_filename = results_dir / f"parsed_research_{timestamp}.json"
     try:
         with open(parsed_filename, "w") as pf:
             json.dump(parsed_research, pf, indent=2)
@@ -145,12 +148,26 @@ def horizon_scan(
         else:
             logger_service.log_event("scenarios_none")
 
-    report_filename = output_dir / f"horizon_scan_results_{timestamp}.json"
+    # Enforce STEEPV ordering in output
+    steepv_order = ["Social", "Tech", "Economic", "Environmental", "Political", "Values"]
+    ordered_signals = OrderedDict((k, all_signals.get(k, [])) for k in steepv_order)
+    report = {
+        "topic": topic,
+        "timestamp": timestamp,
+        "summary": {
+            "total_signals": sum(len(v) for v in ordered_signals.values()),
+            "domains_with_signals": sum(1 for v in ordered_signals.values() if v)
+        },
+        "signals": ordered_signals,
+        "scenario_scores": scenario_scores
+    }
+    report_filename = results_dir / f"horizon_scan_results_{timestamp}.json"
     with open(report_filename, "w") as f:
-        json.dump({"signals": all_signals, "scenario_scores": scenario_scores}, f, indent=2)
+        json.dump(report, f, indent=2)
 
     console.print(f"✅ Horizon scan complete. Report saved to [bold]{report_filename}[/bold]")
     logger_service.log_event("scan_complete", topic=topic, report=str(report_filename), scenarios=len(scenario_scores))
+
 
 
 if __name__ == "__main__":
