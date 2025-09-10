@@ -6,10 +6,12 @@ Project Horizon is a command-line interface (CLI) tool for conducting horizon sc
 
 -   **Deep Research**: Kicks off the process with an in-depth research phase on the user-specified topic.
 -   **STEEPV Agent System**: Deploys six specialized agents, one for each STEEPV category, to analyze the research from different perspectives.
--   **Signal Detection**: Each agent scans for emerging signals, trends, and drivers of change within its domain.
+-   **Signal Detection**: Each agent scans for emerging signals, trends, and drivers of change within its domain (optional offline mode).
 -   **Automated Reporting**: Generates two output files:
     -   A Markdown file (`.md`) containing the initial deep research.
     -   A JSON file (`.json`) containing the structured results of the horizon scan, categorized by STEEPV domain.
+
+> NOTE: Web search now targets Parallel's `v1beta/search` endpoint (fields: `objective`, `search_queries`, etc.) with a temporary legacy fallback.
 
 ## Installation
 
@@ -31,12 +33,12 @@ Project Horizon is a command-line interface (CLI) tool for conducting horizon sc
     ```
 
 4.  **Set up your API keys:**
-    Create a `.env` file in the `horizon-cli` directory and add your API keys. The application requires keys for an OpenAI-compatible LLM and the Parallel.ai search service.
+    Create a `.env` file in the `horizon-cli` directory and add your API keys (never commit real keys to git).
 
-    ```
+    ```env
     OPENAI_API_KEY="your-openai-api-key"
     OPENAI_MODEL="o4-mini-deep-research"
-    PARALLEL_AI_API_KEY="your-parallel-ai-api-key"
+    PARALLEL_AI_API_KEY="your-parallel-ai-api-key"  # Optional if skipping web search
     ```
 
 ## Usage
@@ -47,19 +49,37 @@ To run a horizon scan, use the `main.py` script with the `--topic` option.
 python main.py --topic "The Future of Artificial Intelligence"
 ```
 
-### Options
+### Key Options
 
--   `--topic TEXT`: **(Required)** The topic you want to research.
--   `--output-dir DIRECTORY`: The directory where the output files will be saved. Defaults to the current directory.
+- `--topic TEXT` (required): Topic to research (still required when reusing a file).
+- `--dr-file PATH`: Reuse an existing deep research markdown file (skips new LLM generation).
+- `--skip-web-search`: Skip external web searching (offline / no Parallel key). Signals list will be empty unless you later enrich.
+- `--no-scenario-scoring`: Skip scenario extraction & scoring.
+- `--cache-dir DIRECTORY`: Enable caching of deep research + parsed JSON.
+- `--refresh-cache`: Force regeneration ignoring cached artifacts.
+- `--poll-interval / --max-cycles`: Control LLM polling cadence & timeout.
+- `--log-json`: Emit structured JSON logs instead of plain text.
 
-### Example
+### Examples
 
+Fresh run (full pipeline):
 ```bash
 python main.py --topic "Quantum Computing" --output-dir ./scan_results
 ```
 
-This command will:
-1.  Perform a deep research scan on "Quantum Computing".
-2.  Create a directory named `scan_results` if it doesn't exist.
-3.  Save `dr_YYYY-MM-DD_HHMMSS.md` with the research text in `scan_results`.
-4.  Save `horizon_scan_results_YYYY-MM-DD_HHMMSS.json` with the agent findings in `scan_results`.
+Reuse an existing deep research file and skip search (offline signal structure only):
+```bash
+python main.py --topic "AI Animal Communication" --dr-file ./dr_2025-09-09_164653.md --skip-web-search --no-scenario-scoring
+```
+
+With caching and JSON logs:
+```bash
+python main.py --topic "Generative Biology" --cache-dir ./.cache --log-json --poll-interval 5 --max-cycles 90
+```
+
+Each run produces:
+1. Deep research markdown (unless `--dr-file` used).
+2. Parsed research JSON (`parsed_research_*.json`).
+3. Horizon scan report JSON consolidating signals (and scenarios unless skipped).
+
+If `--skip-web-search` is set, agents still build domain maps but return empty signals; you can later inject mock results or run again without the flag to populate signals.

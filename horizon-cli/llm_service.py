@@ -1,76 +1,260 @@
+import openai
 import config
 import json
-import requests
-import uuid
-from requests.exceptions import HTTPError
+import time
+import os
+import re
+from typing import Any, Dict, List
 
-def _call_responses_api(prompt: str) -> str:
-    """
-    Helper function to call the custom /v1/responses endpoint.
-    """
-    headers = {
-        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "model": config.OPENAI_MODEL,
-        "prompt": {
-            "id": str(uuid.uuid4()),
-            "content": prompt
-        }
-    }
+# Initialize the OpenAI client
+client = openai.Client(api_key=config.OPENAI_API_KEY)
 
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers=headers,
-        json=data
-    )
-    
+DEBUG_DEEP_RESEARCH = os.getenv("DEBUG_DEEP_RESEARCH", "0") == "1"
+
+POLL_INTERVAL_SECONDS = 8
+MAX_POLL_CYCLES = 120  # ~16 minutes max wait
+
+
+def _dump_debug(status_response: Any):
+    if not DEBUG_DEEP_RESEARCH:
+        return
     try:
-        response.raise_for_status()
-    except requests.exceptions.HTTPError as err:
-        print(f"HTTP Error occurred: {err}")
-        print(f"Response body: {response.text}")
+        with open("deep_research_debug.json", "w") as dbg:
+            json.dump(json.loads(status_response.model_dump_json()), dbg, indent=2)
+    except Exception as e:
+        print(f"Debug dump failed: {e}")
+
+
+def _extract_text_from_output(status_response: Any) -> str:
+    """Extract concatenated textual content from a completed responses API object.
+
+    Strategy:
+    1. Prefer assistant message blocks (type == 'message') collecting parts with type in {'output_text','text'}.
+    2. If none found, fall back to reasoning summaries (type == 'reasoning', summary[].text).
+    3. Return error string if still empty.
+    """
+    texts = []
+    # Pass 1: assistant / message blocks
+    for item in getattr(status_response, 'output', []) or []:
+        item_type = getattr(item, 'type', None)
+        if item_type == 'message':
+            content_list = getattr(item, 'content', None)
+            if isinstance(content_list, list):
+                for part in content_list:
+                    p_type = getattr(part, 'type', None)
+                    if p_type in ("output_text", "text"):
+                        t = getattr(part, 'text', None)
+                        if isinstance(t, str):
+                            texts.append(t)
+        elif item_type in ("text", "output_text"):
+            # Some SDK variants might surface direct text blocks
+            content_list = getattr(item, 'content', None)
+            if isinstance(content_list, list):
+                for part in content_list:
+                    t = getattr(part, 'text', None)
+                    if isinstance(t, str):
+                        texts.append(t)
+    if texts:
+        return "\n\n".join(texts).strip()
+
+    # Pass 2: reasoning summaries
+    reasoning_texts = []
+    for item in getattr(status_response, 'output', []) or []:
+        if getattr(item, 'type', None) == 'reasoning':
+            summary_list = getattr(item, 'summary', None)
+            if isinstance(summary_list, list):
+                for s in summary_list:
+                    t = getattr(s, 'text', None)
+                    if isinstance(t, str):
+                        reasoning_texts.append(t)
+    if reasoning_texts:
+        return "\n\n".join(reasoning_texts).strip()
+
+    return "Error: No textual content extracted from deep research output."  # final fallback
+
+
+def configure_timings(poll_interval: int = None, max_cycles: int = None, debug: bool = None):
+    """Optionally override runtime timing/debug controls (used by CLI flags)."""
+    global POLL_INTERVAL_SECONDS, MAX_POLL_CYCLES, DEBUG_DEEP_RESEARCH
+    if poll_interval is not None:
+        POLL_INTERVAL_SECONDS = max(1, int(poll_interval))
+    if max_cycles is not None:
+        MAX_POLL_CYCLES = max(1, int(max_cycles))
+    if debug is not None:
+        DEBUG_DEEP_RESEARCH = bool(debug)
+
+
+def _call_responses_api(system_message: str, user_query: str) -> str:
+    """Call Deep Research via Responses API and return extracted text."""
+    try:
+        response = client.responses.create(
+            model=config.OPENAI_MODEL,
+            input=[
+                {"role": "developer", "content": [{"type": "input_text", "text": system_message}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_query}]}
+            ],
+            tools=[{"type": "web_search_preview"}],
+            reasoning={"summary": "auto"},
+            background=True
+        )
+        response_id = response.id
+
+        cycles = 0
+        while cycles < MAX_POLL_CYCLES:
+            status_response = client.responses.retrieve(response_id)
+            if status_response.status == 'completed':
+                _dump_debug(status_response)
+                return _extract_text_from_output(status_response)
+            if status_response.status in ('failed', 'cancelled'):
+                _dump_debug(status_response)
+                return f"Error: Task {status_response.status}. Details: {getattr(status_response, 'error', None)}"
+            cycles += 1
+            time.sleep(POLL_INTERVAL_SECONDS)
+        return "Error: Deep research timed out waiting for completion."
+    except openai.APIError as e:
+        print(f"An OpenAI API error occurred: {e}")
         raise
 
-    response_data = response.json()
-    
-    # The response format can vary. Try to find the text in common structures.
-    if "text" in response_data:
-        return response_data["text"]
-    elif "choices" in response_data and response_data["choices"]:
-        # Handle cases where response is like standard chat completions
-        choice = response_data["choices"][0]
-        if "text" in choice:
-            return choice["text"]
-        elif "message" in choice and "content" in choice["message"]:
-            return choice["message"]["content"]
-
-    # As a fallback, return the full response text if the structure is unexpected
-    return response.text
 
 def generate_deep_research(topic: str) -> str:
-    """
-    Takes the user's topic, constructs a detailed prompt,
-    calls the LLM API, and returns the full text response.
-    """
-    prompt = f"Generate a deep research report on the topic: {topic}. Cover various aspects including technology, social impact, economic factors, and potential future developments."
-    return _call_responses_api(prompt)
+    system_message = (
+        "You are a world-class deep research analyst. Produce a comprehensive, structured, multi-section foresight report. "
+        "Use clear headings, numbered sections, trend analysis, uncertainties, emerging signals, scenario framings, and a concise executive summary."
+    )
+    user_query = (
+        f"Deep research on: {topic}. Include: 1) Executive Summary 2) Key Drivers 3) Emerging Signals 4) Opportunity/Risk Matrix 5) Scenarios (2–3) 6) Strategic Implications. "
+        "Cite sources inline (short domain form)."
+    )
+    return _call_responses_api(system_message, user_query)
+
 
 def parse_research(dr_text: str) -> dict:
+    system_message = (
+        "You extract structured foresight metadata ONLY as JSON. No prose, no markdown. If input looks like an error, still return valid JSON with empty arrays."
+    )
+    user_query = (
+        "Parse the following research text and extract JSON with keys: 'topics' (list of high-level thematic clusters), 'entities' (organizations, projects, actors), "
+        "'concepts' (methods, technological paradigms, domain concepts). Return ONLY JSON.\n\n" + dr_text
+    )
+    json_string = _call_responses_api(system_message, user_query)
+    data = None
+    # Attempt direct parse
+    try:
+        data = json.loads(json_string)
+    except json.JSONDecodeError:
+        match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", json_string)
+        if match:
+            try:
+                data = json.loads(match.group(1))
+            except Exception:
+                data = None
+    if not isinstance(data, dict):
+        data = {"topics": [], "entities": [], "concepts": []}
+
+    # Heuristic enrichment if topics empty but we have a large deep research text
+    if not data.get("topics") and dr_text and not dr_text.startswith("Error:"):
+        data["topics"] = _heuristic_topics(dr_text)
+    return data
+
+
+def _normalize_domain_map(raw: Dict[str, Any], category: str) -> Dict[str, Any]:
+    """Normalize variable LLM shapes into the structure agents expect.
+
+    Agents expect: {
+        "topics": {
+            "Peripheral": {"<Category>": [...]},
+            "Adjacent": {"<Category>": [...]},
+            "Core": {"<Category>": [...]}
+        }
+    }
+    Accepts inputs like {"Core": [...], "Adjacent": [...], "Peripheral": [...]} or already-normalized forms.
     """
-    Parses the deep research text to extract topics, entities, and concepts.
-    Returns a JSON object.
-    """
-    prompt = f"Parse the following research text and extract the key topics, entities, and concepts. Return the result as a valid JSON object with three keys: 'topics', 'entities', and 'concepts'.\n\n{dr_text}"
-    json_string = _call_responses_api(prompt)
-    return json.loads(json_string)
+    if not isinstance(raw, dict):
+        return {"topics": {"Core": {category: []}, "Adjacent": {category: []}, "Peripheral": {category: []}}}
+
+    # If already nested with 'topics'
+    if 'topics' in raw and isinstance(raw['topics'], dict):
+        return raw
+
+    core = raw.get('Core') or []
+    adjacent = raw.get('Adjacent') or []
+    peripheral = raw.get('Peripheral') or []
+
+    # Some models might return dicts with category keys already
+    if isinstance(core, dict):
+        core_map = core
+    else:
+        core_map = {category: core if isinstance(core, list) else []}
+    if isinstance(adjacent, dict):
+        adjacent_map = adjacent
+    else:
+        adjacent_map = {category: adjacent if isinstance(adjacent, list) else []}
+    if isinstance(peripheral, dict):
+        peripheral_map = peripheral
+    else:
+        peripheral_map = {category: peripheral if isinstance(peripheral, list) else []}
+
+    return {"topics": {"Core": core_map, "Adjacent": adjacent_map, "Peripheral": peripheral_map}}
+
 
 def generate_domain_map(topics: list, category: str) -> dict:
+    system_message = (
+        "You categorize topics by foresight horizon. Return ONLY JSON with keys Core, Adjacent, Peripheral. No explanations."
+    )
+    user_query = (
+        f"Category: {category}. Input topics: {topics}. Output JSON with arrays for Core, Adjacent, Peripheral (each array 3–8 concise topic strings)."
+    )
+    json_string = _call_responses_api(system_message, user_query)
+    try:
+        raw = json.loads(json_string)
+    except json.JSONDecodeError:
+        import re
+        match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", json_string)
+        if match:
+            try:
+                raw = json.loads(match.group(1))
+            except Exception:
+                raw = {}
+        else:
+            raw = {}
+    normalized = _normalize_domain_map(raw, category)
+    # Fallback: ensure at least 1 topic lands in each band to drive downstream scanning
+    cat_key = category
+    bands = ["Core", "Adjacent", "Peripheral"]
+    source_topics = topics or []
+    if source_topics:
+        for i, band in enumerate(bands):
+            band_list = normalized["topics"].get(band, {}).get(cat_key, [])
+            if not band_list:
+                # pick a topic deterministically based on index
+                choice = source_topics[i % len(source_topics)]
+                normalized["topics"].setdefault(band, {}).setdefault(cat_key, []).append(choice)
+    return normalized
+
+
+# ---------------- Heuristic Utilities ---------------- #
+HEADING_PATTERN = re.compile(r"^(#{1,6}\s+|\d+\.|[A-Z][A-Za-z0-9 &/-]{3,}\:)")
+
+def _heuristic_topics(dr_text: str, max_topics: int = 12) -> List[str]:
+    """Extract candidate topics from headings / bullet points / capitalized phrases.
+    Very lightweight heuristic to bootstrap when parsing failed.
     """
-    Generates a domain map of Core, Adjacent, and Peripheral topics.
-    """
-    prompt = f"Given the STEEPV category '{category}' and the list of topics {topics}, generate a domain map with 'Core', 'Adjacent', and 'Peripheral' topics. Return the result as a valid JSON object."
-    json_string = _call_responses_api(prompt)
-    return json.loads(json_string)
+    lines = dr_text.splitlines()
+    topics: List[str] = []
+    seen = set()
+    for ln in lines:
+        line = ln.strip()
+        if not line:
+            continue
+        if HEADING_PATTERN.match(line):
+            cleaned = re.sub(r"^(#{1,6}\s+|\d+\.\s*)", "", line)
+            cleaned = cleaned.rstrip(':').strip()
+            key = cleaned.lower()
+            if (3 <= len(cleaned) <= 120 and
+                key not in {"introduction", "conclusion", "executive summary"} and
+                key not in seen):
+                seen.add(key)
+                topics.append(cleaned)
+                if len(topics) >= max_topics:
+                    break
+    return topics

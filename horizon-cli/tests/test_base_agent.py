@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from agents.base_agent import STEEPV_Agent
 
 # A concrete implementation for testing purposes
-class TestAgent(STEEPV_Agent):
+class AgentUnderTest(STEEPV_Agent):
+    """Concrete test agent whose category resolves to 'UnderTest'."""
     pass
 
 @pytest.fixture
@@ -24,20 +25,20 @@ def mock_web_search_service():
 
 def test_generate_domain_map_calls_llm_service(mock_llm_service):
     # Arrange
-    agent = TestAgent(topics=["initial topic"])
-    expected_map = {"Core": [], "Adjacent": [], "Peripheral": []}
+    agent = AgentUnderTest(topics=["initial topic"])
+    expected_map = {"topics": {"Core": {"UnderTest": []}, "Adjacent": {"UnderTest": []}, "Peripheral": {"UnderTest": []}}}
     mock_llm_service.generate_domain_map.return_value = expected_map
     
     # Act
     agent.generate_domain_map()
     
     # Assert
-    mock_llm_service.generate_domain_map.assert_called_once_with(["initial topic"], "Test")
+    mock_llm_service.generate_domain_map.assert_called_once_with(["initial topic"], "UnderTest")
     assert agent.domain_map == expected_map
 
 def test_generate_domain_map_does_not_call_if_no_topics(mock_llm_service):
     # Arrange
-    agent = TestAgent(topics=[])
+    agent = AgentUnderTest(topics=[])
     
     # Act
     agent.generate_domain_map()
@@ -47,11 +48,11 @@ def test_generate_domain_map_does_not_call_if_no_topics(mock_llm_service):
 
 def test_scan_for_signals_calls_web_search(mock_web_search_service):
     # Arrange
-    agent = TestAgent(topics=["..."])
+    agent = AgentUnderTest(topics=["..."])
     agent.domain_map = {
         "topics": {
-            "Peripheral": {"Test": ["peripheral topic"]},
-            "Adjacent": {"Test": ["adjacent topic"]}
+            "Peripheral": {"UnderTest": ["peripheral topic"]},
+            "Adjacent": {"UnderTest": ["adjacent topic"]}
         }
     }
     mock_web_search_service.search.return_value = [
@@ -70,7 +71,7 @@ def test_scan_for_signals_calls_web_search(mock_web_search_service):
 
 def test_scan_for_signals_handles_no_domain_map(mock_web_search_service):
     # Arrange
-    agent = TestAgent(topics=["..."])
+    agent = AgentUnderTest(topics=["..."])
     agent.domain_map = None # Explicitly set to None
     
     # Act
@@ -82,7 +83,7 @@ def test_scan_for_signals_handles_no_domain_map(mock_web_search_service):
 
 def test_scan_for_signals_handles_malformed_domain_map(mock_web_search_service):
     # Arrange
-    agent = TestAgent(topics=["..."])
+    agent = AgentUnderTest(topics=["..."])
     # Domain map is missing the 'topics' key
     agent.domain_map = {"some_other_key": {}}
     
@@ -95,9 +96,9 @@ def test_scan_for_signals_handles_malformed_domain_map(mock_web_search_service):
 
 def test_scan_for_signals_handles_malformed_search_results(mock_web_search_service):
     # Arrange
-    agent = TestAgent(topics=["..."])
+    agent = AgentUnderTest(topics=["..."])
     agent.domain_map = {
-        "topics": { "Peripheral": {"Test": ["a topic"]}, "Adjacent": {} }
+        "topics": { "Peripheral": {"UnderTest": ["a topic"]}, "Adjacent": {} }
     }
     # Search result is missing expected keys
     mock_web_search_service.search.return_value = [{"unexpected_key": "value"}]

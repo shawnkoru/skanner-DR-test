@@ -1,6 +1,10 @@
 from abc import ABC, abstractmethod
 import llm_service
 import web_search_service
+try:
+    import logger_service
+except Exception:  # pragma: no cover - optional
+    logger_service = None
 
 class STEEPV_Agent(ABC):
     """
@@ -35,9 +39,15 @@ class STEEPV_Agent(ABC):
                          self.domain_map.get("topics", {}).get("Adjacent", {}).get(self.__class__.__name__.replace("Agent", ""), [])
 
         for topic in topics_to_scan:
-            search_results = web_search_service.search(topic)
+            try:
+                search_results = web_search_service.search(topic)
+            except Exception as e:  # Gracefully degrade if search fails (e.g., missing API key)
+                if logger_service:
+                    logger_service.log_event("search_error", topic=topic, error=str(e))
+                else:
+                    print(f"Search error for topic '{topic}': {e}")
+                continue
             for result in search_results:
-                # In a real implementation, you would use an LLM call to evaluate relevance
                 signal = {
                     "title": result.get("title", "N/A"),
                     "description": result.get("snippet", "N/A"),
